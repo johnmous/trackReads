@@ -22,6 +22,8 @@ do
 done\
 )
 
+countReadIDs=( $allReadIDs )
+echo "Number of reads: " ${#countReadIDs[@]}
 
 echo -e "$allReadIDs" | ./readID2GenomicLocation.py ../Scratch/tr_exonmapping_Ioannis/S21_STAR_bowtie.bam  \
 ../Results/HumanGenome_GRCh38_release83/Homo_sapiens.GRCh38.83.chr.gtf_GeneOnlySimplified.txt

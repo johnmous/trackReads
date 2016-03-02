@@ -19,7 +19,6 @@ for line in sys.stdin:
         readIDs.append(line)
 
 
-
 """ A function to read the simplified annotation file and return a dictionary 
     chromosome => [start, stop, geneID] for all gene IDs
 """ 
@@ -57,28 +56,44 @@ def annotateLocation(chrom, pos, annotation):
 
 def getReadLocation(bamFile, annotation):
     samFile=pysam.AlignmentFile(bamFile, 'rb')
+    # object to write a bam file
+    matchedReads = pysam.AlignmentFile("matchedReads.bam", "wb", template=samFile)
     # readID to chromosome, position
     readIDToAttr={}
+    readToRecord={}
     for read in samFile.fetch(until_eof=True):
         if not read.is_unmapped:
             alignmentStart=read.reference_start+1
+            cigarTuple=read.cigartuples
             readID=read.query_name
             readIDSplit=readID.split('/')[0]
             mappedOn=samFile.getrname(read.reference_id)
-            readIDToAttr[readIDSplit]=[mappedOn, alignmentStart]
+            readIDToAttr[readIDSplit]=[mappedOn, alignmentStart, cigarTuple]
+            # Save the record in a dictionary             
+            readToRecord[readIDSplit]=read            
+            
         else:
             readID=read.query_name
             readIDSplit=readID.split('/')[0]
-            readIDToAttr[readIDSplit]=["*", "0"]            
+            readIDToAttr[readIDSplit]=["*", "0", [()]]            
             
     # get the attributes of readIDs 
     chromToLocations={}   
     unMappedReadIDs=[]
-    geneIDs=[]     
+    geneIDs=[]
+    records=[]     
     for readID in readIDs:
         try: 
             chromosome=readIDToAttr[readID][0]
             location=readIDToAttr[readID][1]
+            cigarTuples=readIDToAttr[readID][2]
+            records.append(readToRecord[readID])
+            # iterate over tuples and print the skipped reference length            
+            for tple in cigarTuples:
+                if tple[0]==3:
+                    skipedRefLength=tple[1]
+                    print(skipedRefLength)
+                    
             if chromosome!="*":
                 geneID=annotateLocation(chromosome, location, annotation)
                 geneIDs.append(geneID)
@@ -91,16 +106,17 @@ def getReadLocation(bamFile, annotation):
             else:
                 unMappedReadIDs.append(readID)
         except KeyError:
-            print(readID + " not in alignment file: " )
+            print(readID + " not in alignment file" )
     
     for key in chromToLocations:
         fivePrime=min(chromToLocations[key])
         threePrime=max(chromToLocations[key])
         regionSpan=threePrime-fivePrime
-        numberOfReads=len(chromToLocations[key])
+        numberOfReads=len(chromToLocations[key])      
+        
         print("In region {0}:{1}-{2}, spanning {4}nts there are {3} Reads".format(key, fivePrime, threePrime, numberOfReads, regionSpan))
     
-    print("Moreover, {0} read(s) were left unmapped:".format(len(unMappedReadIDs)))
+    print("\nMoreover, {0} read(s) were left unmapped:".format(len(unMappedReadIDs)))
     print(unMappedReadIDs)
     
     # Flatten the gene IDs list
@@ -109,6 +125,10 @@ def getReadLocation(bamFile, annotation):
     
     for gene in countReadsInGenes:
         print("{1} Reads Mapping On: {0}".format(gene, countReadsInGenes[gene]))
+    for record in records:
+        matchedReads.write(record)    
+    samFile.close()
+    matchedReads.close()    
     
 annotation=getAnnotation(annotationFile)    
 getReadLocation(bamFile, annotation)
