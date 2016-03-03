@@ -6,7 +6,7 @@ import pysam
 import sys
  
 # Save bam File from argv 
-bamFile =str(sys.argv[1])
+genomeAlignFile =str(sys.argv[1])
 annotationFile =str(sys.argv[2])
 
 # Store readIDs from STDIN in an array
@@ -54,8 +54,8 @@ def annotateLocation(chrom, pos, annotation):
     return(geneIDsList)
 
 
-def getReadLocation(bamFile, annotation):
-    samFile=pysam.AlignmentFile(bamFile, 'rb')
+def getReadLocation(genomeAlignFile, annotation):
+    samFile=pysam.AlignmentFile(genomeAlignFile, 'rb')
     # object to write a bam file
     matchedReads = pysam.AlignmentFile("matchedReads.bam", "wb", template=samFile)
     # readID to chromosome, position
@@ -92,7 +92,7 @@ def getReadLocation(bamFile, annotation):
             for tple in cigarTuples:
                 if tple[0]==3:
                     skipedRefLength=tple[1]
-                    print(skipedRefLength)
+                    #print(skipedRefLength)
                     
             if chromosome!="*":
                 geneID=annotateLocation(chromosome, location, annotation)
@@ -128,7 +128,9 @@ def getReadLocation(bamFile, annotation):
     for record in records:
         matchedReads.write(record)    
     samFile.close()
-    matchedReads.close()    
+    matchedReads.close()
+    pysam.sort("matchedReads.bam", "matchedReads.sorted")    
+    pysam.index("matchedReads.sorted.bam")
     
 annotation=getAnnotation(annotationFile)    
-getReadLocation(bamFile, annotation)
+getReadLocation(genomeAlignFile, annotation)
