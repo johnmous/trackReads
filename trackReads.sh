@@ -16,14 +16,34 @@ TranscriptIDs=( $TranscriptIDs )
 echo "Number of Transcripts:" ${#TranscriptIDs[@]}
 
 allReadIDs=$(\
-for TrID in $TranscriptIDs;
+for TrID in ${TranscriptIDs[@]};
 do
-  grep $TrID ../Scratch/mapped_Ioannis/S21_tmap_transc.sam | grep -v "@"|cut -f 1 | sort | uniq 
+  grep $TrID ../Scratch/mapped_Ioannis/S21_tmap_transc.sam | grep -v "@" | cut -f 1 | sort | uniq
+  # calculate mismatch statistics on the trascriptome file. 
+  # Redirect the STDOUT to STDERR so it is not captured in the variable
+  echo -e "\nStats on Reads of Transcript: $TrID" 1>&2 
+  grep $TrID ../Scratch/mapped_Ioannis/S21_tmap_transc.sam | grep -v "@" |\
+  perl -e 'my $len; 
+  $mismatch; 
+  my $i=0; 
+  while (<STDIN>) {
+    $i++; 
+    my @field=split("\t", $_); 
+    $len+=length(@field[9]); 
+    $_ =~ m/NM:i:([0-9]+)/;
+    $mismatch+=$1;
+    }
+  if ($i==0) {print(" Number of Reads: ", $i, "\n")
+    }
+  else {
+    printf(" Number of Reads: %d \n Average MisMatch/ReadLength: %.3f \n Average MisMatch Number: %.1f \n", $i,$mismatch/$len, $mismatch/$i)
+    }' 1>&2 
+    
 done\
 )
 
 countReadIDs=( $allReadIDs )
-echo "Number of reads: " ${#countReadIDs[@]}
+echo -e "\nNumber of reads in all Transcripts: " ${#countReadIDs[@]}
 
 echo -e "$allReadIDs" | ./readID2GenomicLocation.py ../Scratch/tr_exonmapping_Ioannis/S21_STAR_bowtie.bam  \
 ../Results/HumanGenome_GRCh38_release83/Homo_sapiens.GRCh38.83.chr.gtf_GeneOnlySimplified.txt
