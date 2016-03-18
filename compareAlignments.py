@@ -5,7 +5,8 @@
 import pysam
 import sys
 import bisect
- 
+import re
+import gc 
  
 # Save bam File from argv 
 genomeAlignFile =str(sys.argv[1])
@@ -73,9 +74,10 @@ def getTranscriptome(transcAlignFile):
             readID=read.query_name
             readIDSplit=readID.split('/')[0]
             readInst=Alignment(readIDSplit)
+            
     return(readInstList)
     
-geneReads=getTranscriptome(transcAlignFile)  
+#geneReads=getTranscriptome(transcAlignFile)  
 #read=readIDs[0]
 #print(read.readID, "\n", read.referenceID, "\n", read.misMatches, "\n", read.mapQual, "\n",  read.readLength, "\n", read.cigarTuple)
 #
@@ -86,45 +88,116 @@ geneReads=getTranscriptome(transcAlignFile)
 #        geneReads.append(read)
     
 
-""" A function to read the simplified annotation file and return a dictionary 
-    chromosome => [start, stop, geneID] for all gene IDs
+# take chromosome and postition and anotation dictionary and return geneID(s)        
+def annotateLocation(pos, annotation, j):
+
+    geneIDsList=[]
+    chromosomeAnnot=annotation
+    first=True
+    length=len(chromosomeAnnot)
+    for i in range(j, length):
+        annotElement = chromosomeAnnot[i]
+        if annotElement[0]<=pos and annotElement[1]>=pos:
+            geneIDsList.append(annotElement[2])
+        # Start positions are ordered. If start > pos, break the loop
+        if annotElement[0]>pos:
+            break
+        # get the index of the first stop position that is larger than pos and save it in j.
+        # next iteration start iterating from j, to make the search space smaller.
+        # This requires that current pos is always larger than the previous.
+        if first:    
+            if annotElement[1]>=pos:   
+                j=i
+                first=False
+        
+    if len(geneIDsList)==0:
+        geneIDsList=["NonAnnotatedRegion"]
+    return(geneIDsList, j)    
+    
+
+
+""" A function to read a gff3 file and return a dictionary 
+    chromosome => position => [transcriptID(s)]
 """ 
 def getAnnotation(annotationFile):
     fileHandle=open(annotationFile, 'r')
     annotation={}
+    firstLine=True
+    chromosomesLen={}
     for line in fileHandle:
         line=line[:-1] 
-        listOfAtr=line.split('\t')
-        chrom=listOfAtr[0]
-        startPos=int(listOfAtr[1])
-        stopPos=int(listOfAtr[2])
-        geneID=listOfAtr[3]
-        
-        # build a dictionary chromosome => [start, stop, geneID]
-        if chrom not in annotation:
-            annotation[chrom]=[[startPos, stopPos, geneID]]   
-        else:
-            annotation[chrom].append([startPos, stopPos, geneID])     
-    # sort for later use with bisect        
+        #if line starts with #        
+        if line[0]=="#":
+            if firstLine:
+                firstLine=False
+                if line!="##gff-version   3":
+                    print("Annotation not a GFF3 file")
+                    #sys.exit
+            # get the length for all chromosomes 
+            if line[0:17]=="##sequence-region":
+                splitLine=line.split("   ")
+                chrom=splitLine[1].split(" ")[0]
+                chromLen=int(splitLine[1].split(" ")[2])
+                chromosomesLen[chrom]=chromLen
+        else:    
+            listOfAttr=line.split('\t')
+            chrom=listOfAttr[0]
+            typeOfFeature=listOfAttr[2]
+            startPos=int(listOfAttr[3])
+            stopPos=int(listOfAttr[4])
+            attributes=listOfAttr[8]
+            # if the type of feature is good, build a dictionary chromosome => [start, stop, geneID]
+            if re.search("transcript", typeOfFeature):
+                featureID=re.findall('ID=transcript:([A-Z0-9]+);', attributes)
+                if len(featureID)>0:
+                    if chrom not in annotation:
+                        annotation[chrom]=[[startPos, stopPos, featureID[0] ]]   
+                    else:
+                        annotation[chrom].append([startPos, stopPos, featureID[0] ])
+                        
+
+    # sort to speed up(?) and build the dict chrom => pos => geneID(s)
+    annotatedGenome={}
+    gc.disable()
     for chromosome in annotation:
+        print("Annotating chromosome: ", chromosome)
         annotation[chromosome].sort()
-    return(annotation)
-
-
-# take chromosome and postition and anotation dictionary and return geneID(s)        
-# use bisect to make it faster, given the huge amount of comparissons
-def annotateLocation(chrom, pos, annotation):
-
-    geneIDsList=[]
-    chromosomeAnnot=annotation[chrom]
-    for i in range(len(chromosomeAnnot)):
-        annotElement = chromosomeAnnot[i]
-        if int(annotElement[0])<=pos and int(annotElement[1])>=pos:
-            geneIDsList.append(annotElement[2])
-    if len(geneIDsList)==0:
-        geneIDsList=["NonAnnotatedRegion"]
-    return(geneIDsList)    
+        for line in annotation["1"]:
+            print(line)
+        chromLen=chromosomesLen[chromosome]
+#        annotatedGenome[chromosome]={}
+        chromosomeAnnotTable=[]
+        j=0
+        for pos in range(chromLen): 
+            if pos%1000000==0:
+                print("base n:", pos, "on chromosome:", chromosome)
+#                print("index: ", j)
+            featureID, j =annotateLocation(pos, annotation[chromosome], j)
+            chromosomeAnnotTable.append(featureID)
+        annotatedGenome[chromosome]=chromosomeAnnotTable
+    gc.enable()
     
+    return(annotatedGenome)
+    
+annotation=getAnnotation(annotationFile)
+
+
+print(annotation["1"][100])
+print(annotation["1"][13000])
+print(annotation["1"][44000])
+print(annotation["1"][52500])
+print(annotation["1"][55000])
+print(annotation["1"][111000])
+print(annotation["1"][90000])
+print(annotation["1"][145000])
+#annotateLocation("1", 13000, annotation)
+#annotateLocation("1", 44000, annotation)
+#annotateLocation("1", 52500, annotation)
+#annotateLocation("1", 55000, annotation)
+#annotateLocation("1", 111000, annotation)
+#annotateLocation("1", 90000, annotation)
+
+
 
 
 def getReadLocation(genomeAlignFile, annotation, readIDs):
@@ -223,5 +296,5 @@ def getReadLocation(genomeAlignFile, annotation, readIDs):
 #    pysam.sort("matchedReads.bam", "matchedReads.sorted")    
 #    pysam.index("matchedReads.sorted.bam")
     
-annotation=getAnnotation(annotationFile)
-getReadLocation(genomeAlignFile, annotation, geneReads)
+
+#getReadLocation(genomeAlignFile, annotation, geneReads)
