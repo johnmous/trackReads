@@ -6,7 +6,11 @@ import pysam
 import sys
 import bisect
 import re
-import gc 
+import gc
+from pprint import pprint 
+import time
+
+
  
 # Save bam File from argv 
 genomeAlignFile =str(sys.argv[1])
@@ -51,7 +55,6 @@ def index(a, x):
     if i != len(a) and a[i] == x:
         return i
     raise ValueError
-    
 
 # A function to read the transcriptome alignment file
 def getTranscriptome(transcAlignFile):
@@ -77,7 +80,8 @@ def getTranscriptome(transcAlignFile):
             
     return(readInstList)
     
-#geneReads=getTranscriptome(transcAlignFile)  
+geneReads=getTranscriptome(transcAlignFile)  
+print("Transcriptome Alignment Loaded")
 #read=readIDs[0]
 #print(read.readID, "\n", read.referenceID, "\n", read.misMatches, "\n", read.mapQual, "\n",  read.readLength, "\n", read.cigarTuple)
 #
@@ -88,13 +92,13 @@ def getTranscriptome(transcAlignFile):
 #        geneReads.append(read)
     
 
-# take chromosome and postition and anotation dictionary and return geneID(s)        
-def annotateLocation(pos, annotation, j):
-
+# take chromosome and postition, anotation dictionary and last saved start for looping (j) and return geneID(s)        
+def annotateLocation(chrom, pos, annotation, j):
     geneIDsList=[]
-    chromosomeAnnot=annotation
+    chromosomeAnnot=annotation[chrom]
     first=True
     length=len(chromosomeAnnot)
+    # iterate over all annotated features
     for i in range(j, length):
         annotElement = chromosomeAnnot[i]
         if annotElement[0]<=pos and annotElement[1]>=pos:
@@ -105,11 +109,11 @@ def annotateLocation(pos, annotation, j):
         # get the index of the first stop position that is larger than pos and save it in j.
         # next iteration start iterating from j, to make the search space smaller.
         # This requires that current pos is always larger than the previous.
-        if first:    
-            if annotElement[1]>=pos:   
+#        if first:    
+        if annotElement[1]>=pos and first:   
                 j=i
                 first=False
-        
+    # if the lsit is empty, it is a non annotated region
     if len(geneIDsList)==0:
         geneIDsList=["NonAnnotatedRegion"]
     return(geneIDsList, j)    
@@ -154,42 +158,19 @@ def getAnnotation(annotationFile):
                         annotation[chrom]=[[startPos, stopPos, featureID[0] ]]   
                     else:
                         annotation[chrom].append([startPos, stopPos, featureID[0] ])
-                        
-
-    # sort to speed up(?) and build the dict chrom => pos => geneID(s)
-    annotatedGenome={}
-    gc.disable()
-    for chromosome in annotation:
-        print("Annotating chromosome: ", chromosome)
-        annotation[chromosome].sort()
-        for line in annotation["1"]:
-            print(line)
-        chromLen=chromosomesLen[chromosome]
-#        annotatedGenome[chromosome]={}
-        chromosomeAnnotTable=[]
-        j=0
-        for pos in range(chromLen): 
-            if pos%1000000==0:
-                print("base n:", pos, "on chromosome:", chromosome)
-#                print("index: ", j)
-            featureID, j =annotateLocation(pos, annotation[chromosome], j)
-            chromosomeAnnotTable.append(featureID)
-        annotatedGenome[chromosome]=chromosomeAnnotTable
-    gc.enable()
-    
-    return(annotatedGenome)
+    return(annotation)
     
 annotation=getAnnotation(annotationFile)
+print("Annotation Loaded")
 
-
-print(annotation["1"][100])
-print(annotation["1"][13000])
-print(annotation["1"][44000])
-print(annotation["1"][52500])
-print(annotation["1"][55000])
-print(annotation["1"][111000])
-print(annotation["1"][90000])
-print(annotation["1"][145000])
+#print(annotation["1"][100])
+#print(annotation["1"][13000])
+#print(annotation["1"][44000])
+#print(annotation["1"][52500])
+#print(annotation["1"][55000])
+#print(annotation["1"][111000])
+#print(annotation["1"][90000])
+#print(annotation["1"][145000])
 #annotateLocation("1", 13000, annotation)
 #annotateLocation("1", 44000, annotation)
 #annotateLocation("1", 52500, annotation)
@@ -199,12 +180,12 @@ print(annotation["1"][145000])
 
 
 
-
-def getReadLocation(genomeAlignFile, annotation, readIDs):
+# read the genomic alignment file, calculate and print some relevant statistics
+def getReadLocation(genomeAlignFile, annotation, transcrReads):
     samFile=pysam.AlignmentFile(genomeAlignFile, 'rb')
     
     # readID to chromosome, position
-    readIDToAttr=[]
+    genomicReadIDToAttr=[]
     #readToRecord={}
     for read in samFile.fetch(until_eof=True):
         readID=read.query_name
@@ -213,12 +194,12 @@ def getReadLocation(genomeAlignFile, annotation, readIDs):
             alignmentStart=read.reference_start+1
             cigarTuple=read.cigartuples
             mappedOn=samFile.getrname(read.reference_id)
-            readIDToAttr.append([readIDSplit, mappedOn, alignmentStart, cigarTuple])
+            genomicReadIDToAttr.append([readIDSplit, mappedOn, alignmentStart, cigarTuple])
             # Save the record in a dictionary             
             #readToRecord[readIDSplit]=read            
             
         else:
-            readIDToAttr.append([readIDSplit, "*", "0", [()]])
+            genomicReadIDToAttr.append([readIDSplit, "*", "0", [()]])
             
     # get the attributes of readIDs 
     matching=0
@@ -228,50 +209,58 @@ def getReadLocation(genomeAlignFile, annotation, readIDs):
     nonMatchingNMTag=0
     nonMatchingLength=0
     
-    # sort the list. Should use the 1st element of the nested lists
-    readIDToAttr.sort()
-    readIDsOnly=[read[0] for read in readIDToAttr]
-    cnt=0    
-    for read in readIDs:
-        cnt+=1
-        try: 
-            idx=index(readIDsOnly, read.readID)
-            chromosome=readIDToAttr[idx][1]
-            location=readIDToAttr[idx][2]
-#            cigarTuples=readIDToAttr[read.readID][2]
-            #records.append(readToRecord[read.readID])
-            # iterate over tuples and print the skipped reference length            
-#            for tple in cigarTuples:
-#                if tple[0]==3:
-#                    skipedRefLength=tple[1]
-#                    #print(skipedRefLength)
-                    
-            if chromosome!="*":
-                genomicAlignmentGeneID=annotateLocation(chromosome, location, annotation)
-                #print(genomicAlignmentGeneID)
+    # sort the list on chromosome and start possition
+    genomicReadIDToAttr = sorted(genomicReadIDToAttr, key = lambda x: (x[1], x[2]))
+    genomicReadIDs=[read[0] for read in genomicReadIDToAttr]
+    # Sort on readID so I can use bisect on the resulting list
+    transcrReadsSorted = sorted(transcrReads, key = lambda x: x.readID)
+    transcrReadIDs=[read.readID for read in transcrReadsSorted] 
+    cnt=0  
+    j=0
+    lastChrom=genomicReadIDToAttr[0][1]
+    for readAttributes in genomicReadIDToAttr:
+        genomicReadID=readAttributes[0]
+        genomicReadChrom=readAttributes[1]
+        genomicReadStartPos=readAttributes[2]
+        # read list is shorted. Every time a new chromosme comes, set j=0
+        if lastChrom!=genomicReadChrom:
+            j=0
+            lastChrom=genomicReadChrom
+            print("Chromosome: ", lastChrom)
+        
+        cnt+=1       
+
+        try:
+            idx=index(transcrReadIDs, genomicReadID)
+            transcrRead=transcrReadsSorted[idx]
+            if genomicReadChrom!="*":
+                genomicAlignmentGeneID, j = annotateLocation(genomicReadChrom, genomicReadStartPos, annotation, j)
 #                print("refID: {0}, gene ID: {1}, chromosome: {2}, location: {3} ".format(read.referenceID, genomicAlignmentGeneID, chromosome, location ))                
+            else:
+                genomicAlignmentGeneID=[]
                 
-                if read.referenceID in genomicAlignmentGeneID: 
-                    matching+=1
-                    matchingNMTag+=read.misMatches
-                    matchingLength+=read.readLength
-                else:
-                    nonMatching+=1
-                    nonMatchingNMTag+=read.misMatches
-                    nonMatchingLength+=read.readLength
-            if cnt%10000==0:
+            if transcrRead.referenceID in genomicAlignmentGeneID: 
+                matching+=1
+                matchingNMTag+=transcrRead.misMatches
+                matchingLength+=transcrRead.readLength
+            else:
+                nonMatching+=1
+                nonMatchingNMTag+=transcrRead.misMatches
+                nonMatchingLength+=transcrRead.readLength
+            if cnt%100000==0:
                 print("Processing read n. ", str(cnt))
-                sys.exit()
         # index function might raise ValueError            
         except ValueError:
-            print(read.readID + " not in alignment file")
+            print(genomicReadID + " not in transcriptome alignment file")
 
     print("reads matching", matching)
     print("reads non matching", nonMatching)
     print("nonMatching/Total: ", nonMatching/(matching+nonMatching) )
     print("reads Matching NM/readLength: ", matchingNMTag/matchingLength)
     print("reads nonMatching NM/readLength: ", nonMatchingNMTag/nonMatchingLength)
-        
+ 
+getReadLocation(genomeAlignFile, annotation, geneReads)
+      
 #    for key in chromToLocations:
 #        fivePrime=min(chromToLocations[key])
 #        threePrime=max(chromToLocations[key])
@@ -297,4 +286,32 @@ def getReadLocation(genomeAlignFile, annotation, readIDs):
 #    pysam.index("matchedReads.sorted.bam")
     
 
-#getReadLocation(genomeAlignFile, annotation, geneReads)
+
+
+#            cigarTuples=readIDToAttr[read.readID][2]
+            #records.append(readToRecord[read.readID])
+            # iterate over tuples and print the skipped reference length            
+#            for tple in cigarTuples:
+#                if tple[0]==3:
+#                    skipedRefLength=tple[1]
+#                    #print(skipedRefLength)
+    # sort to speed up(?) and build the dict chrom => pos => geneID(s)
+#    annotatedGenome={}
+#    gc.disable()
+#    for chromosome in annotation:
+#        print("Annotating chromosome: ", chromosome)
+#        annotation[chromosome].sort()
+#        for line in annotation["1"]:
+#            print(line)
+#        chromLen=chromosomesLen[chromosome]
+##        annotatedGenome[chromosome]={}
+#        chromosomeAnnotTable=[]
+#        j=0
+#        for pos in range(chromLen): 
+#            if pos%1000000==0:
+#                print("base n:", pos, "on chromosome:", chromosome)
+##                print("index: ", j)
+#            featureID, j =annotateLocation(pos, annotation[chromosome], j)
+#            chromosomeAnnotTable.append(featureID)
+#        annotatedGenome[chromosome]=chromosomeAnnotTable
+#    gc.enable()
