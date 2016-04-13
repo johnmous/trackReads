@@ -33,6 +33,9 @@ class Alignment:
     def __init__(self, readID):
         self.readID=readID
     
+    def alignmentStart(self, alignmentStart):
+        self.alignmentStart=alignmentStart
+    
     def referenceID(self, referenceID):
         self.referenceID=referenceID
         
@@ -56,9 +59,16 @@ def index(a, x):
         return i
     raise ValueError
 
-# A function to read the transcriptome alignment file
-def getTranscriptome(transcAlignFile):
-    samFile=pysam.AlignmentFile(transcAlignFile, 'r')
+# A function to read an alignment file and return a list of alignment (read) instances
+def getAlignment(alignmentFile):
+    if transcAlignFile.endswith(".sam"):
+        samFile=pysam.AlignmentFile(alignmentFile, 'r')
+    elif transcAlignFile.endswith(".bam"):
+        samFile=pysam.AlignmentFile(alignmentFile, 'rb')
+    else: 
+        print("Unknown type of file. Expecting .bam or .sam extensions only")
+        sys.exit()
+        
     # readID to chromosome, position
     readInstList=[]
     for read in samFile.fetch(until_eof=True):
@@ -68,9 +78,14 @@ def getTranscriptome(transcAlignFile):
             readInst=Alignment(readIDSplit)
             readInst.cigarTuple(read.cigartuples)
             readInst.referenceID(samFile.getrname(read.reference_id))
-            readInst.misMatches(read.get_tag('NM'))
+            # Not all alignment files have NM tag, catch the key error             
+            try:            
+                readInst.misMatches(read.get_tag('NM'))
+            except KeyError:
+                pass
             readInst.mapQual(read.mapping_quality)
             readInst.readLength(read.query_length)
+            readInst.alignmentStart(read.reference_start)
             readInstList.append(readInst)            
 
         else:
@@ -80,7 +95,7 @@ def getTranscriptome(transcAlignFile):
             
     return(readInstList)
     
-geneReads=getTranscriptome(transcAlignFile)  
+geneReads=getAlignment(transcAlignFile)  
 print("Transcriptome Alignment Loaded")
 #read=readIDs[0]
 #print(read.readID, "\n", read.referenceID, "\n", read.misMatches, "\n", read.mapQual, "\n",  read.readLength, "\n", read.cigarTuple)
@@ -182,24 +197,25 @@ print("Annotation Loaded")
 
 # read the genomic alignment file, calculate and print some relevant statistics
 def getReadLocation(genomeAlignFile, annotation, transcrReads):
-    samFile=pysam.AlignmentFile(genomeAlignFile, 'rb')
+    genomicAlignment=getAlignment(genomeAlignFile)
     
-    # readID to chromosome, position
-    genomicReadIDToAttr=[]
-    #readToRecord={}
-    for read in samFile.fetch(until_eof=True):
-        readID=read.query_name
-        readIDSplit=readID.split('/')[0]
-        if not read.is_unmapped:
-            alignmentStart=read.reference_start+1
-            cigarTuple=read.cigartuples
-            mappedOn=samFile.getrname(read.reference_id)
-            genomicReadIDToAttr.append([readIDSplit, mappedOn, alignmentStart, cigarTuple])
-            # Save the record in a dictionary             
-            #readToRecord[readIDSplit]=read            
-            
-        else:
-            genomicReadIDToAttr.append([readIDSplit, "*", "0", [()]])
+    
+#    # readID to chromosome, position
+#    genomicReadIDToAttr=[]
+#    #readToRecord={}
+#    for read in samFile.fetch(until_eof=True):
+#        readID=read.query_name
+#        readIDSplit=readID.split('/')[0]
+#        if not read.is_unmapped:
+#            alignmentStart=read.reference_start+1
+#            cigarTuple=read.cigartuples
+#            mappedOn=samFile.getrname(read.reference_id)
+#            genomicReadIDToAttr.append([readIDSplit, mappedOn, alignmentStart, cigarTuple])
+#            # Save the record in a dictionary             
+#            #readToRecord[readIDSplit]=read            
+#            
+#        else:
+#            genomicReadIDToAttr.append([readIDSplit, "*", "0", [()]])
             
     # get the attributes of readIDs 
     matching=0
@@ -210,18 +226,18 @@ def getReadLocation(genomeAlignFile, annotation, transcrReads):
     nonMatchingLength=0
     
     # sort the list on chromosome and start possition
-    genomicReadIDToAttr = sorted(genomicReadIDToAttr, key = lambda x: (x[1], x[2]))
-    genomicReadIDs=[read[0] for read in genomicReadIDToAttr]
+    genomicReadIDToAttr = sorted(genomicAlignment, key = lambda x: (x.referenceID, x.alignmentStart))
+    genomicReadIDs=[read.readID for read in genomicAlignment]
     # Sort on readID so I can use bisect on the resulting list
     transcrReadsSorted = sorted(transcrReads, key = lambda x: x.readID)
     transcrReadIDs=[read.readID for read in transcrReadsSorted] 
     cnt=0  
     j=0
-    lastChrom=genomicReadIDToAttr[0][1]
-    for readAttributes in genomicReadIDToAttr:
-        genomicReadID=readAttributes[0]
-        genomicReadChrom=readAttributes[1]
-        genomicReadStartPos=readAttributes[2]
+    lastChrom=genomicReadIDToAttr[0].referenceID
+    for read in genomicReadIDToAttr:
+        genomicReadID=read.readID
+        genomicReadChrom=read.referenceID
+        genomicReadStartPos=read.alignmentStart
         # read list is shorted. Every time a new chromosme comes, set j=0
         if lastChrom!=genomicReadChrom:
             j=0
